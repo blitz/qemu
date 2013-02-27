@@ -827,30 +827,6 @@ void qemu_mutex_unlock_ramlist(void)
 
 #if defined(__linux__) && !defined(TARGET_S390X)
 
-#include <sys/vfs.h>
-
-#define HUGETLBFS_MAGIC       0x958458f6
-
-static long gethugepagesize(const char *path)
-{
-    struct statfs fs;
-    int ret;
-
-    do {
-        ret = statfs(path, &fs);
-    } while (ret != 0 && errno == EINTR);
-
-    if (ret != 0) {
-        perror(path);
-        return 0;
-    }
-
-    if (fs.f_type != HUGETLBFS_MAGIC)
-        fprintf(stderr, "Warning: path not on HugeTLBFS: %s\n", path);
-
-    return fs.f_bsize;
-}
-
 static void *file_ram_alloc(RAMBlock *block,
                             ram_addr_t memory,
                             const char *path)
@@ -860,17 +836,9 @@ static void *file_ram_alloc(RAMBlock *block,
     char *c;
     void *area;
     int fd;
-#ifdef MAP_POPULATE
-    int flags;
-#endif
-    unsigned long hpagesize;
+    unsigned long pagesize = getpagesize();
 
-    hpagesize = gethugepagesize(path);
-    if (!hpagesize) {
-        return NULL;
-    }
-
-    if (memory < hpagesize) {
+    if (memory < pagesize) {
         return NULL;
     }
 
@@ -899,7 +867,7 @@ static void *file_ram_alloc(RAMBlock *block,
     unlink(filename);
     g_free(filename);
 
-    memory = (memory+hpagesize-1) & ~(hpagesize-1);
+    memory = (memory+pagesize-1) & ~(pagesize-1);
 
     /*
      * ftruncate is not supported by hugetlbfs in older
@@ -910,16 +878,8 @@ static void *file_ram_alloc(RAMBlock *block,
     if (ftruncate(fd, memory))
         perror("ftruncate");
 
-#ifdef MAP_POPULATE
-    /* NB: MAP_POPULATE won't exhaustively alloc all phys pages in the case
-     * MAP_PRIVATE is requested.  For mem_prealloc we mmap as MAP_SHARED
-     * to sidestep this quirk.
-     */
-    flags = mem_prealloc ? MAP_POPULATE | MAP_SHARED : MAP_PRIVATE;
-    area = mmap(0, memory, PROT_READ | PROT_WRITE, flags, fd, 0);
-#else
-    area = mmap(0, memory, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-#endif
+    area = mmap(0, memory, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
     if (area == MAP_FAILED) {
         perror("file_ram_alloc: can't mmap RAM pages");
         close(fd);
