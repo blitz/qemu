@@ -1,0 +1,8 @@
+
+* ioeventfd
+
+Maybe we can speed up kicks on the queues done by the guest os by
+registering an ioeventfd for the PIO access to VIRTIO_PCI_QUEUE_NOTIFY?
+
+http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=d34e6b175e61821026893ec5298cc8e7558df43a
+http://blog.vmsplice.net/2011/09/qemu-internals-vhost-architecture.html
