@@ -30,6 +30,7 @@
 typedef struct ExternalPCIBAR {
   struct ExternalPCI *parent;
   MemoryRegion        region;
+  EventNotifier       notifier;
 } ExternalPCIBAR;
 
 typedef struct ExternalPCI {
@@ -74,34 +75,31 @@ domain_socket_connect(const char *addr)
 static int
 externalpci_call(int fd, externalpci_req *req, externalpci_res *res)
 {
-  struct msghdr  hdr;
-  struct iovec   iov = { req, sizeof(*req) };
-  union {
-    struct cmsghdr chdr;
-    char           chdr_data[CMSG_SPACE(sizeof(int))];
-  } u;
+  struct msghdr   hdr;
+  struct iovec    iov = { req, sizeof(*req) };
+  char            chdr_data[CMSG_SPACE(sizeof(int))];
+  struct cmsghdr *chdr = (struct cmsghdr *)chdr_data;
 
-  hdr.msg_name    = NULL;
   hdr.msg_namelen = 0;
   hdr.msg_iov     = &iov;
   hdr.msg_iovlen  = 1;
   hdr.msg_flags   = 0;
+  hdr.msg_control    = NULL;
+  hdr.msg_controllen = 0;
+
+  chdr->cmsg_len   = CMSG_LEN(sizeof(int));
+  chdr->cmsg_level = SOL_SOCKET;
+  chdr->cmsg_type  = SCM_RIGHTS;
     
   if (req->type == EXTERNALPCI_REQ_REGION or
       req->type == EXTERNALPCI_REQ_IRQ) {
     // Pass file descriptor
-    hdr.msg_control    = &u.chdr;
+    hdr.msg_control    = chdr;
     hdr.msg_controllen = CMSG_LEN(sizeof(int));
-    u.chdr.cmsg_len    = CMSG_LEN(sizeof(int));
-    u.chdr.cmsg_level  = SOL_SOCKET;
-    u.chdr.cmsg_type   = SCM_RIGHTS;
 
-    *(int *)(CMSG_DATA(&u.chdr)) = (req->type == EXTERNALPCI_REQ_REGION) ?
-      req->region.fd : req->irq_req.fd;
-  } else {
-    // No file descriptor to pass
-    hdr.msg_control    = NULL;
-    hdr.msg_controllen = 0;
+    memcpy(CMSG_DATA(chdr),
+	   (req->type == EXTERNALPCI_REQ_REGION) ? &req->region.fd : &req->irq_req.fd,
+	   sizeof(int));
   }
 
   int err;
@@ -112,11 +110,34 @@ externalpci_call(int fd, externalpci_req *req, externalpci_res *res)
     return -1;
   }
 
+  iov.iov_base = res;
+  iov.iov_len = sizeof(*res);
+  hdr.msg_control    = chdr;
+  hdr.msg_controllen = CMSG_SPACE(sizeof(int));
+
  recv_again:
-  err = recv(fd, res, sizeof(*res), 0);
+  err = recvmsg(fd, &hdr, 0);
   if (err != sizeof(*res)) {
     if (err < 0 && errno == EINTR) goto recv_again;
     return -1;
+  }
+
+  struct cmsghdr *incoming_chdr = CMSG_FIRSTHDR(&hdr);
+  if (incoming_chdr) {
+    int fd;
+    memcpy(&fd, CMSG_DATA(chdr), sizeof(int));
+
+    if (res->type == EXTERNALPCI_REQ_PCI_INFO) {
+      res->pci_info.hotspot_fd = fd;
+    } else {
+      LOG("Received file descriptor, but didn't expect one.");
+      close(fd);
+    }
+  }
+
+  if (not incoming_chdr and res->type == EXTERNALPCI_REQ_PCI_INFO) {
+    LOG("No hotspot?");
+    res->pci_info.hotspot_fd = 0;
   }
 
   return 0;
@@ -301,6 +322,18 @@ static int externalpci_init(PCIDevice *pdev)
 			    bar & PCI_BASE_ADDRESS_IO_MASK);
       pci_register_bar(pdev, bar_no, PCI_BASE_ADDRESS_SPACE_IO, &bar_data->region);
       LOG("BAR[%u]: IO %08lx", bar_no, bar & PCI_BASE_ADDRESS_IO_MASK);
+
+      if (bar_no == res.pci_info.hotspot_bar) {
+	event_notifier_init_fd(&bar_data->notifier, res.pci_info.hotspot_fd);
+	memory_region_add_eventfd(&bar_data->region,
+				  res.pci_info.hotspot_addr,
+				  res.pci_info.hotspot_size,
+				  false, 0,
+				  &bar_data->notifier);
+	LOG("Added notifier to hotspot %x+%x",
+	    res.pci_info.hotspot_addr, res.pci_info.hotspot_size);
+      }
+
     } else {
       LOG("XXX Skipping memory BAR.");
     }
@@ -316,9 +349,8 @@ static int externalpci_init(PCIDevice *pdev)
   if (err) { return err; }
 
 
-  LOG("Looks good so far. XXX Install socket handler.");
+  LOG("Looks good so far.");
   //qemu_set_fd_handler2(d->socket, 
-  /* XXX Complete ... */
 
   return 0;
  unlock_fail:

@@ -118,6 +118,12 @@ void vnet_init(struct device_state *state, externalpci_pci_info_res *res)
 
   res->bar[0].size = 0x40 | PCI_BASE_ADDRESS_SPACE_IO;
   res->msix_vectors = 3;
+
+  /* We don't want to handle accesses to QUEUE_NOTIFY here, but wake
+     up the polling thread directly. */
+  res->hotspot_bar  = 0;
+  res->hotspot_addr = VIRTIO_PCI_QUEUE_NOTIFY;
+  res->hotspot_size = 2;
 }
 
 void vnet_irq_info(struct device_state *state, int fd, int msix_idx, externalpci_irq_res *res)
@@ -479,7 +485,7 @@ vnet_send_notify(VirtQueue *vq)
     uint64_t v = 1;
     int fd = vq->state->irqs[msix_idx].fd;
 
-    LOG(vq->state, "Trigger MSI-X vector %u via fd %d!", msix_idx, fd);
+    // LOG(vq->state, "Trigger MSI-X vector %u via fd %d!", msix_idx, fd);
     if (fd)
       write(fd, &v, sizeof(v));
   }
@@ -508,17 +514,17 @@ vnet_poll_tx(struct device_state *state)
   VirtQueueElement elem;
   while (vnet_virtqueue_pop(vq, &elem)) {
 
-    LOG(state, "TX %zu bytes out.", iov_size(elem.out_sg, elem.out_num));
+    // LOG(state, "TX %zu bytes out.", iov_size(elem.out_sg, elem.out_num));
 
     assert(elem.out_num > 1);
     assert(elem.out_sg[0].iov_len == expected_hdr_len);
-    struct virtio_net_hdr *hdr = elem.out_sg[0].iov_base;
+    // struct virtio_net_hdr *hdr = elem.out_sg[0].iov_base;
 
     /* Header seems to be empty? */
 
-    LOG(state, "TX flags %x hdr_len %x gso_type %x gso_size %x csum_start %x csum_offset %x",
-	hdr->flags, hdr->hdr_len, hdr->gso_type,
-	hdr->gso_size, hdr->csum_start, hdr->csum_offset);
+    /* LOG(state, "TX flags %x hdr_len %x gso_type %x gso_size %x csum_start %x csum_offset %x", */
+    /* 	hdr->flags, hdr->hdr_len, hdr->gso_type, */
+    /* 	hdr->gso_size, hdr->csum_start, hdr->csum_offset); */
 
     packet_out(state, elem.out_sg, elem.out_num, expected_hdr_len);
 
@@ -553,7 +559,7 @@ vnet_packet_in(struct device_state *state,
 	       struct iovec *iov, unsigned len,
 	       size_t hdr_offset)
 {
-  LOG(state, "Received %zu bytes packet.", iov_size(iov, len) - hdr_offset);
+  // LOG(state, "Received %zu bytes packet.", iov_size(iov, len) - hdr_offset);
 
   VirtQueue *vq               = &state->vq[0];
   size_t     expected_hdr_len = vnet_hdr_size(state);

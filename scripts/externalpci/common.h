@@ -67,7 +67,6 @@ void vnet_io_write(struct device_state *state, unsigned bar, uint64_t addr, unsi
 
 bool vnet_poll(struct device_state *state);
 
-/* Common helpers */
 void schedule_poll(struct device_state *state);
 void *translate_pointer(struct device_state *state, hwaddr addr, size_t size);
 void packet_out(struct device_state *state, struct iovec *iov, unsigned len, size_t offset);

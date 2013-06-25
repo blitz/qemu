@@ -88,6 +88,13 @@ struct externalpci_pci_info_res {
 
   uint8_t  msix_vectors;
 
+  /* We currently support a single hotspot. Access to hotspots trigger
+     an eventfd. */
+  uint8_t  hotspot_bar;
+  uint16_t hotspot_addr;
+  uint8_t  hotspot_size;
+  int      hotspot_fd;
+
   struct {
     /* Lowest bits contain type of BAR etc. */
     uint32_t size;

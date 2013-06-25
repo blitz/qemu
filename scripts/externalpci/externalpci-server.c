@@ -18,7 +18,8 @@
 #include "hw/misc/externalpci.h"
 #include "common.h"
 
-static int                  event_fd;
+/* The eventfd that is used  */
+static int poll_event_fd;
 
 static struct device_state  *state_list;
 static struct device_state **state_list_tail = &state_list;
@@ -58,11 +59,8 @@ int receive_msg(int session, externalpci_req *req)
   struct cmsghdr *incoming_chdr = CMSG_FIRSTHDR(&hdr);
   if (incoming_chdr) {
     int fd;
-    // Can't do this, because GCC complains about aliasing:
-    // fd = *(int *)(CMSG_DATA(chdr));
     memcpy(&fd, CMSG_DATA(chdr), sizeof(int));
 
-    // printf("Received file descriptor %d from client.\n", fd);
     if (req->type == EXTERNALPCI_REQ_REGION) {
       req->region.fd = fd;
     } else if (req->type == EXTERNALPCI_REQ_IRQ) {
@@ -75,6 +73,36 @@ int receive_msg(int session, externalpci_req *req)
   }
 
   return 0;
+}
+
+int send_msg(int session, externalpci_res *res)
+{
+  struct msghdr   hdr;
+  struct iovec    iov = { res, sizeof(*res) };
+  char            chdr_data[CMSG_SPACE(sizeof(int))];
+  struct cmsghdr *chdr = (struct cmsghdr *)chdr_data;
+
+  hdr.msg_name       = NULL;
+  hdr.msg_namelen    = 0;
+  hdr.msg_iov        = &iov;
+  hdr.msg_iovlen     = 1;
+  hdr.msg_flags      = 0;
+  hdr.msg_control    = NULL;
+  hdr.msg_controllen = 0;
+
+  if (res->type == EXTERNALPCI_REQ_PCI_INFO) {
+    // Pass file descriptor
+    hdr.msg_control    = chdr;
+    hdr.msg_controllen = CMSG_LEN(sizeof(int));
+    chdr->cmsg_len    = CMSG_LEN(sizeof(int));
+    chdr->cmsg_level  = SOL_SOCKET;
+    chdr->cmsg_type   = SCM_RIGHTS;
+
+    memcpy(CMSG_DATA(chdr), &res->pci_info.hotspot_fd, sizeof(int));
+  }
+
+  ssize_t err = sendmsg(session, &hdr, MSG_EOR | MSG_NOSIGNAL);
+  return (err == (ssize_t)iov.iov_len) ? 0 : -1;
 }
 
 static void *
@@ -138,6 +166,7 @@ commthread_fn(void *opaque)
       break;
     case EXTERNALPCI_REQ_PCI_INFO:
       vnet_init(state, &res.pci_info);
+      res.pci_info.hotspot_fd = poll_event_fd;
       break;
     case EXTERNALPCI_REQ_RESET:
       vnet_reset(state);
@@ -152,7 +181,7 @@ commthread_fn(void *opaque)
       goto fail;
     };
 
-    send(session, &res, sizeof(res), MSG_EOR);
+    if (send_msg(session, &res) != 0) goto fail;
   }
 
  fail:
@@ -184,7 +213,7 @@ workerthread_fn(void *arg)
       } while (work_done);
 
 
-  } while (read(event_fd, &events, sizeof(events)) == sizeof(events));
+  } while (read(poll_event_fd, &events, sizeof(events)) == sizeof(events));
 
   printf("Worker thread down.\n");
   return NULL;
@@ -196,7 +225,7 @@ schedule_poll(struct device_state *state)
   (void)state;			/* Ignore state for now. */
   
   uint64_t arg = 1;
-  write(event_fd, &arg, sizeof(arg));
+  write(poll_event_fd, &arg, sizeof(arg));
 }
 
 void *translate_pointer(struct device_state *state, hwaddr addr, size_t size)
@@ -232,7 +261,7 @@ void packet_out(struct device_state *state,
 int main()
 {
   /* Create worker thread */
-  event_fd = eventfd(0, 0);
+  poll_event_fd = eventfd(0, 0);
   pthread_t worker;
   pthread_create(&worker, NULL, workerthread_fn, NULL);
 
