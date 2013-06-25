@@ -502,14 +502,15 @@ vnet_hdr_size(struct device_state *state)
 static bool
 vnet_poll_tx(struct device_state *state)
 {
+  /* When the function pointer is set, everything should be set up. */
+  if (not state->packet_in or not (state->status & VIRTIO_CONFIG_S_DRIVER_OK)) {
+    //LOG(state, "Driver not ready!");
+    return false;
+  }
+
   VirtQueue *vq               = &state->vq[1];
   bool       work_done        = false;
   size_t     expected_hdr_len = vnet_hdr_size(state);
-
-  if (not vq->pa or not (state->status & VIRTIO_CONFIG_S_DRIVER_OK)) {
-    LOG(state, "Driver not ready!");
-    return false;
-  }
 
   VirtQueueElement elem;
   while (vnet_virtqueue_pop(vq, &elem)) {
@@ -565,13 +566,11 @@ vnet_packet_in(struct device_state *state,
   size_t     expected_hdr_len = vnet_hdr_size(state);
   assert(expected_hdr_len == hdr_offset);
 
-  if (not vq->pa
-      or not (state->status & VIRTIO_CONFIG_S_DRIVER_OK)
-      or vq->vring.avail->idx == 0) {
+  if (not vq->pa or not (state->status & VIRTIO_CONFIG_S_DRIVER_OK)) {
     LOG(state, "Driver not ready!");
     return;
   }
-
+     
   VirtQueueElement elem;
   if (vnet_virtqueue_pop(vq, &elem) == 0) {
     /* No room in queue. Drop packet. */

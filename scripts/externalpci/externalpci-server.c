@@ -200,9 +200,11 @@ workerthread_fn(void *arg)
 
   uint64_t events;
   do {
-    bool work_done = false;
+    bool work_done;
 
       do {
+	work_done = false;
+
 	for (struct device_state *state = state_list;
 	     state != NULL; state = state->next) {
 	  unsigned count = 32;
@@ -298,6 +300,8 @@ int main()
     perror("listen");
     return -1;
   }
+
+  printf("Ready.\n");
 
   while (true) {
     socklen_t si = sizeof(client_addr);
