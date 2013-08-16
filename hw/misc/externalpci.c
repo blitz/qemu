@@ -166,7 +166,7 @@ externalpci_query_irqs(ExternalPCI *d)
     
     MSIMessage msg = msix_get_message(&d->pdev, req.irq_req.idx);
     int virq = kvm_irqchip_add_msi_route(kvm_state, msg);
-    if (err < 0) { abort(); }
+    if (virq < 0) { LOG("IRQ routing failed. You might need to enable KVM."); abort(); }
 
     LOG("MSI-X vector %u -> IRQ %u", req.irq_req.idx, virq);
 
