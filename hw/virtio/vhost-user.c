@@ -206,6 +206,7 @@ static int vhost_user_call(struct vhost_dev *dev, unsigned long int request,
     case VHOST_SET_MEM_TABLE:
         QTAILQ_FOREACH(block, &ram_list.blocks, next)
         {
+            assert(fd_num < VHOST_MEMORY_MAX_NREGIONS);
             if (block->fd > 0) {
                 msg.memory.regions[fd_num].userspace_addr = (__u64) block->host;
                 msg.memory.regions[fd_num].memory_size = block->length;
