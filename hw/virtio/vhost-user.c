@@ -21,7 +21,7 @@
 #include <sys/un.h>
 #include <linux/vhost.h>
 
-#define VHOST_MEMORY_MAX_NREGIONS    8
+#define VHOST_MEMORY_MAX_NREGIONS    32
 
 typedef enum VhostUserRequest {
     VHOST_USER_NONE = 0,
